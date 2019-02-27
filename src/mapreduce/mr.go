@@ -2,26 +2,27 @@ package mapreduce
 
 import (
 	"bufio"
+	"container/list"
+	"encoding/json"
 	"fmt"
+	"hash/fnv"
 	"log"
 	"os"
 	"strconv"
-	"container/list"
 	"strings"
 	"unicode"
-	"json"
 )
 
 var _ = os.Args
 
 type KeyValue struct {
-	key string
-	value string
+	Key   string
+	Value string
 }
 type MapReduce struct {
-	file string // name of file
-	nMap int    // the number of Map jobs
-	nReduce int // the number of reduce jobs
+	file    string // name of file
+	nMap    int    // the number of Map jobs
+	nReduce int    // the number of reduce jobs
 }
 
 // init
@@ -37,7 +38,7 @@ func InitMapReduce(file string, nMap, nReduce int) *MapReduce {
 func RunSingle(file string, nMap, nReduce int) {
 	mr := InitMapReduce(file, nMap, nReduce)
 	mr.Split(mr.file)
-	for i:=0;i<nMap;i++ {
+	for i := 0; i < 1; i++ {
 		DoMap(file, i, nReduce)
 	}
 }
@@ -131,14 +132,23 @@ func DoMap(file string, jobNum, nReduce int) {
 
 	}
 	opFile.Close()
-	res:= Map(string(b))
-	for i:=0;i<nReduce;i++ {
+	res := Map(string(b))
+	for i := 0; i < nReduce; i++ {
 		oFile, err := os.Create(ReduceName(file, jobNum, i))
-		if err!=nil {
+		if err != nil {
 			log.Fatal("DoMap:", err)
 		}
 		enc := json.NewEncoder(oFile)
-		//TODo: 
+		for f := res.Front(); f != nil; f = f.Next() {
+			w := f.Value.(KeyValue)
+			if ihash(w.Key)%uint32(nReduce) == uint32(i) {
+				err := enc.Encode(&w)
+				if err != nil {
+					log.Fatal("DoMap:")
+				}
+			}
+
+		}
 
 	}
 	//for f :=res.Front();f!=nil;res=res.Next(){
@@ -147,13 +157,19 @@ func DoMap(file string, jobNum, nReduce int) {
 
 }
 
+func ihash(s string) uint32 {
+	h := fnv.New32a()
+	h.Write([]byte(s))
+	return h.Sum32()
+}
+
 func Map(s string) *list.List {
 	split := func(r rune) bool {
-		return unicode.IsLetter(r)
+		return !unicode.IsLetter(r)
 	}
-	words:=strings.FieldsFunc(s, split)
+	words := strings.FieldsFunc(s, split)
 
-	l:= list.New()
+	l := list.New()
 	for _, word := range words {
 		l.PushBack(KeyValue{word, "1"})
 	}
