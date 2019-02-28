@@ -8,6 +8,7 @@ import (
 	"hash/fnv"
 	"log"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 	"unicode"
@@ -36,10 +37,13 @@ func InitMapReduce(file string, nMap, nReduce int) *MapReduce {
 
 // RunSingle run single job
 func RunSingle(file string, nMap, nReduce int) {
-	mr := InitMapReduce(file, nMap, nReduce)
-	mr.Split(mr.file)
-	for i := 0; i < 1; i++ {
-		DoMap(file, i, nReduce)
+	// mr := InitMapReduce(file, nMap, nReduce)
+	// mr.Split(mr.file)
+	// for i := 0; i < nMap; i++ {
+	// 	DoMap(file, i, nReduce)
+	// }
+	for i := 0; i < nReduce; i++ {
+		DoReduce(file, i, nMap)
 	}
 }
 
@@ -103,6 +107,10 @@ func ReduceName(file string, jNum, rJob int) string {
 	return MapName(file, jNum) + "-" + strconv.Itoa(rJob)
 }
 
+func MergeName(file string, jobNum int) string {
+	return "mtmp-" + file + "-res-" + strconv.Itoa(jobNum)
+}
+
 // DoMap do map
 // open file
 // read file byte
@@ -122,7 +130,7 @@ func DoMap(file string, jobNum, nReduce int) {
 
 	}
 	size := fi.Size()
-	fmt.Printf("DoMap: read split %s %d", file, size)
+	fmt.Printf("DoMap: read split %s %d \n", file, size)
 
 	b := make([]byte, size)
 	_, err = opFile.Read(b)
@@ -157,12 +165,65 @@ func DoMap(file string, jobNum, nReduce int) {
 
 }
 
+// DoReduce decode from reduce file
+// use List store map[key] List{value}
+// sort key
+// count list length
+// return sum
+// creat Merge file
+// encode KeyValue{key, sum}
+// store it
+func DoReduce(file string, jobNum, nMap int) {
+
+	keyVs := make(map[string]*list.List)
+
+	for i := 0; i < nMap; i++ {
+		name := ReduceName(file, i, jobNum)
+		file, err := os.Open(name)
+		if err != nil {
+			log.Fatal("DoReduce: ", err)
+		}
+		dec := json.NewDecoder(file)
+		for {
+			kv := new(KeyValue)
+			err := dec.Decode(kv)
+			if err != nil {
+				break
+			}
+			_, ok := keyVs[kv.Key]
+			if !ok {
+				keyVs[kv.Key] = list.New()
+			}
+			keyVs[kv.Key].PushBack(kv.Value)
+		}
+		file.Close()
+	}
+	var keys []string
+	for key := range keyVs {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	// create outfile
+	oFile, err := os.Create(MergeName(file, jobNum))
+	if err != nil {
+		log.Fatal("Reduce:", err)
+	}
+	enc := json.NewEncoder(oFile)
+	for _, key := range keys {
+		s := Reduce(key, keyVs[key]) // word1: 20, word2: 30
+		enc.Encode(&KeyValue{key, s})
+	}
+	oFile.Close()
+
+}
+
 func ihash(s string) uint32 {
 	h := fnv.New32a()
 	h.Write([]byte(s))
 	return h.Sum32()
 }
 
+// Map store {word: 1 } {word1: 1} in List
 func Map(s string) *list.List {
 	split := func(r rune) bool {
 		return !unicode.IsLetter(r)
@@ -175,4 +236,18 @@ func Map(s string) *list.List {
 	}
 	return l
 
+}
+
+// Reduce return sum of List.length
+func Reduce(key string, l *list.List) string {
+	sum := 0
+	for e := l.Front(); e != nil; e = e.Next() {
+		i, err := strconv.Atoi(e.Value.(string))
+		if err != nil {
+			log.Fatal("Reduce:", err)
+		}
+		sum += i
+
+	}
+	return strconv.Itoa(sum)
 }
