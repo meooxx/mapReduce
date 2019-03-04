@@ -37,14 +37,15 @@ func InitMapReduce(file string, nMap, nReduce int) *MapReduce {
 
 // RunSingle run single job
 func RunSingle(file string, nMap, nReduce int) {
-	// mr := InitMapReduce(file, nMap, nReduce)
+	mr := InitMapReduce(file, nMap, nReduce)
 	// mr.Split(mr.file)
 	// for i := 0; i < nMap; i++ {
 	// 	DoMap(file, i, nReduce)
 	// }
-	for i := 0; i < nReduce; i++ {
+	/* for i := 0; i < nReduce; i++ {
 		DoReduce(file, i, nMap)
-	}
+	} */
+	mr.Merge()
 }
 
 // Split split bytes of input into nMap splits
@@ -94,6 +95,45 @@ func (mr *MapReduce) Split(inputFile string) {
 
 	writer.Flush()
 	outfile.Close()
+
+}
+
+func (mr *MapReduce) Merge() {
+	kvs := make(map[string] string)
+	for i := 0; i < mr.nReduce; i++ {
+		file, err := os.Open(MergeName(mr.file, i))
+		if err != nil {
+			log.Fatal("Merge:", err)
+		}
+		dec:=json.NewDecoder(file)
+
+		for {
+			kv:= new(KeyValue)
+			err := dec.Decode(kv)
+			if err!= nil {
+				break
+			}
+			kvs[kv.Key] = kv.Value
+		}
+		file.Close()
+	}
+
+	keys := []string{}
+	for key := range kvs {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+
+	oFile, err := os.Create("mrtemp-" +  mr.file)
+	if err != nil {
+		log.Fatal("Merge:", err)
+	}
+	w := bufio.NewWriter(oFile)
+	for _, k:=range keys {
+		fmt.Fprintf(w, "%s: %s\n", k, kvs[k])
+	}
+	w.Flush()
+	oFile.Close()
 
 }
 
